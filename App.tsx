@@ -1,36 +1,82 @@
+
 import React, { useState, useEffect } from 'react';
-import Auth from './components/Auth';
+import Sidebar from './components/Sidebar';
 import Dashboard from './components/Dashboard';
+import Chat from './components/Chat';
+import Auth from './components/Auth';
 import Reports from './components/Reports';
 import Settings from './components/Settings';
-import StatusView from './components/StatusView';
-import UsersView from './components/UsersView';
-import Sidebar from './components/Sidebar';
-import AWBModal from './components/AWBModal';
-import { User, FilterState, ViewType } from './types';
+import History from './components/History';
+import FollowUp from './components/FollowUp';
+import UserManagement from './components/UserManagement';
+import { User, ViewType, FilterState } from './types';
+import { storageService } from './services/storageService';
+import { AlertCircle, X, RefreshCw } from 'lucide-react';
 
 const App: React.FC = () => {
   const [user, setUser] = useState<User | null>(null);
-  const [theme, setTheme] = useState<'light' | 'dark'>('dark');
+  const [isInitializing, setIsInitializing] = useState(true);
   const [currentView, setCurrentView] = useState<ViewType>('dashboard');
+  const [theme, setTheme] = useState<'dark' | 'light'>('dark');
+  const [usersList, setUsersList] = useState<User[]>([]);
+  const [globalError, setGlobalError] = useState<string | null>(null);
   const [filters, setFilters] = useState<FilterState>({
     statuses: [],
     period: 'todos'
   });
-  const [isAWBModalOpen, setIsAWBModalOpen] = useState(false);
-  const [editingRecord, setEditingRecord] = useState<any>(undefined);
-  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+
+  const loadUsers = async () => {
+    try {
+      const cloudUsers = await storageService.getUsers();
+      if (cloudUsers.length > 0) {
+        setUsersList(cloudUsers);
+        localStorage.setItem('app_users', JSON.stringify(cloudUsers));
+        
+        if (user) {
+          const updatedSelf = cloudUsers.find(u => u.id === user.id);
+          if (updatedSelf) {
+            setUser(updatedSelf);
+            localStorage.setItem('auth_user', JSON.stringify(updatedSelf));
+          }
+        }
+      }
+    } catch (e) {
+      console.error("Erro ao sincronizar usuários:", e);
+      setGlobalError("Erro de sincronização: A base de dados pode estar inacessível no momento.");
+    }
+  };
 
   useEffect(() => {
-    const savedUser = localStorage.getItem('auth_user');
-    if (savedUser) {
-      setUser(JSON.parse(savedUser));
-    }
+    const init = async () => {
+      try {
+        const savedUser = localStorage.getItem('auth_user');
+        const savedTheme = localStorage.getItem('app_theme') as 'dark' | 'light';
+        
+        if (savedUser) {
+          try {
+            setUser(JSON.parse(savedUser));
+          } catch (e) {
+            console.warn("Sessão corrompida, limpando...");
+            localStorage.removeItem('auth_user');
+          }
+        }
+        
+        if (savedTheme) setTheme(savedTheme || 'dark');
+        
+        await loadUsers();
+      } catch (err) {
+        console.error("Falha crítica no boot:", err);
+      } finally {
+        setIsInitializing(false);
+      }
+    };
+    init();
   }, []);
 
-  const handleLogin = (loggedInUser: User) => {
-    setUser(loggedInUser);
-    localStorage.setItem('auth_user', JSON.stringify(loggedInUser));
+  const handleLogin = (userData: User) => {
+    setUser(userData);
+    localStorage.setItem('auth_user', JSON.stringify(userData));
+    setCurrentView('dashboard');
   };
 
   const handleLogout = () => {
@@ -38,111 +84,86 @@ const App: React.FC = () => {
     localStorage.removeItem('auth_user');
   };
 
-  const handleClearFilters = () => {
-    setFilters({ statuses: [], period: 'todos' });
+  const handleNavigate = (view: ViewType) => setCurrentView(view);
+
+  const handleUserUpdate = (updatedUser: User) => {
+    setUser(updatedUser);
+    localStorage.setItem('auth_user', JSON.stringify(updatedUser));
+    loadUsers();
   };
 
-  const handleNewShipment = () => {
-    setEditingRecord(undefined);
-    setIsAWBModalOpen(true);
+  const handleToggleTheme = () => {
+    const newTheme = theme === 'dark' ? 'light' : 'dark';
+    setTheme(newTheme);
+    localStorage.setItem('app_theme', newTheme);
   };
 
-  const handleAWBModalSave = () => {
-    setIsAWBModalOpen(false);
-    setEditingRecord(undefined);
-    // Recarregar dados se necessário
-  };
+  if (isInitializing) {
+    return (
+      <div className="h-screen w-full flex flex-col items-center justify-center bg-[#050a14] gap-4">
+        <div className="w-12 h-12 border-4 border-blue-500 border-t-transparent rounded-full animate-spin"></div>
+        <p className="text-slate-500 text-[10px] font-black uppercase tracking-widest animate-pulse">Iniciando Portal Logístico v3.2...</p>
+      </div>
+    );
+  }
 
-  const handleExportData = () => {
-    // Dispara evento para o Dashboard exportar
-    window.dispatchEvent(new CustomEvent('export-data'));
-  };
+  if (!user) return <Auth onLogin={handleLogin} />;
 
-  const handleSyncData = () => {
-    // Recarrega dados de todas as views
-    window.location.reload();
-  };
-
-  const handleImportData = () => {
-    alert('Funcionalidade de importação em desenvolvimento');
-  };
-
-  const handleBackupData = () => {
-    alert('Funcionalidade de backup em desenvolvimento');
-  };
-
-  const renderView = () => {
+  const renderContent = () => {
     switch (currentView) {
       case 'dashboard':
-        return (
-          <Dashboard
-            filters={filters}
-            onClearFilters={handleClearFilters}
-            theme={theme}
-            onGoToSettings={() => setCurrentView('settings')}
-            onMobileMenuToggle={() => setMobileMenuOpen(!mobileMenuOpen)}
-          />
-        );
+        return <Dashboard filters={filters} />;
       case 'reports':
-        return (
-          <Reports
-            theme={theme}
-            onBack={() => setCurrentView('dashboard')}
-            onMobileMenuToggle={() => setMobileMenuOpen(!mobileMenuOpen)}
-          />
-        );
+        return <Reports theme={theme} onBack={() => setCurrentView('dashboard')} />;
+      case 'chat':
+        return <Chat />;
       case 'settings':
-        return <Settings theme={theme} onMobileMenuToggle={() => setMobileMenuOpen(!mobileMenuOpen)} />;
-      case 'status':
-        return <StatusView theme={theme} onMobileMenuToggle={() => setMobileMenuOpen(!mobileMenuOpen)} />;
+        return <Settings theme={theme} users={usersList} onRefreshUsers={loadUsers} />;
       case 'users':
-        return <UsersView theme={theme} onMobileMenuToggle={() => setMobileMenuOpen(!mobileMenuOpen)} />;
+        return <UserManagement users={usersList} onRefreshUsers={loadUsers} currentUser={user} />;
+      case 'history':
+        return <History />;
+      case 'follow-up-pre':
+        return <FollowUp filters={filters} isPreMode={true} />;
+      case 'follow-up':
+        return <FollowUp filters={filters} />;
       default:
-        return (
-          <Dashboard
-            filters={filters}
-            onClearFilters={handleClearFilters}
-            theme={theme}
-            onGoToSettings={() => setCurrentView('settings')}
-          />
-        );
+        return <Dashboard filters={filters} />;
     }
   };
 
-  if (!user) {
-    return <Auth onLogin={handleLogin} />;
-  }
-
-
   return (
-    <div className="flex h-screen overflow-hidden">
-      <Sidebar
-        user={user}
-        onLogout={handleLogout}
-        currentView={currentView}
-        onNavigate={setCurrentView}
-        filters={filters}
-        onFilterChange={setFilters}
-        theme={theme}
-        onToggleTheme={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
-        onNewShipment={handleNewShipment}
-        onExportData={handleExportData}
-        onSyncData={handleSyncData}
-        onImportData={handleImportData}
-        onBackupData={handleBackupData}
-        mobileOpen={mobileMenuOpen}
-        onMobileToggle={() => setMobileMenuOpen(!mobileMenuOpen)}
+    <div className={`flex h-screen w-full overflow-hidden ${theme === 'dark' ? 'text-slate-200 bg-[#050a14]' : 'text-slate-900 bg-slate-50'}`}>
+      
+      {globalError && (
+        <div className="fixed top-0 left-0 right-0 z-[200] bg-rose-600 text-white px-8 py-4 flex items-center justify-between shadow-2xl animate-in slide-in-from-top duration-500">
+           <div className="flex items-center gap-4">
+              <AlertCircle size={20} />
+              <p className="text-[10px] font-black uppercase tracking-widest">{globalError}</p>
+           </div>
+           <div className="flex items-center gap-2">
+             <button onClick={() => { setGlobalError(null); loadUsers(); }} className="p-2 hover:bg-white/10 rounded-lg transition-all flex items-center gap-2 text-[8px] font-bold uppercase">
+                <RefreshCw size={14} /> Tentar Novamente
+             </button>
+             <button onClick={() => setGlobalError(null)} className="p-2 hover:bg-white/10 rounded-lg transition-all">
+                <X size={16} />
+             </button>
+           </div>
+        </div>
+      )}
+
+      <Sidebar 
+        user={user} 
+        onLogout={handleLogout} 
+        currentView={currentView} 
+        onNavigate={handleNavigate} 
+        filters={filters} 
+        onFilterChange={setFilters} 
+        theme={theme} 
+        onToggleTheme={handleToggleTheme}
+        onUserUpdate={handleUserUpdate}
       />
-      <div className="flex-1 flex flex-col overflow-hidden lg:ml-0">
-        {renderView()}
-      </div>
-      <AWBModal
-        isOpen={isAWBModalOpen}
-        onClose={() => { setIsAWBModalOpen(false); setEditingRecord(undefined); }}
-        onSave={handleAWBModalSave}
-        editingRecord={editingRecord}
-        theme={theme}
-      />
+      {renderContent()}
     </div>
   );
 };
