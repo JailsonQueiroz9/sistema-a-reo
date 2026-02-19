@@ -1,158 +1,243 @@
 
 import React, { useState } from 'react';
-import { Shield, Lock, Mail, ChevronRight, AlertCircle, Loader2 } from 'lucide-react';
+import { Shield, Lock, Mail, ChevronRight, AlertCircle, Loader2, User as UserIcon, Briefcase, ArrowLeft } from 'lucide-react';
 import { User } from '../types';
-import { storageService, getApiUrl } from '../services/storageService';
+import { storageService } from '../services/storageService';
 
 interface AuthProps {
   onLogin: (user: User) => void;
 }
 
 const Auth: React.FC<AuthProps> = ({ onLogin }) => {
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
+  const [isRegistering, setIsRegistering] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState('');
+  const [success, setSuccess] = useState('');
+
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [name, setName] = useState('');
+  const [cargo, setCargo] = useState('');
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
-
-    const apiUrl = getApiUrl();
-    if (!apiUrl) {
-      setError('ERRO DE CONFIGURAÇÃO: URL da Planilha não encontrada.');
-      return;
-    }
-
     setIsLoading(true);
-
+    
     try {
       const users = await storageService.getUsers();
-
-      // Tentar encontrar usuário na planilha
       const foundUser = users.find(u => {
         const uEmail = String(u["E-MAIL"] || u.email || '').toLowerCase().trim();
-        const uPass = String(u.SENHA || u.senha || '123456').trim();
+        const uPass = String(u.SENHA || u.senha || '').trim();
         return uEmail === email.toLowerCase().trim() && uPass === password.trim();
       });
 
       if (foundUser) {
-        if (foundUser.status === 'inativo') {
-          setError('ACESSO BLOQUEADO: Seu usuário está inativo.');
+        // Validação estrita conforme solicitado: "Só vai ter acesso se consta como ativo"
+        const userStatus = String(foundUser.status || foundUser.STATUS || '').toLowerCase().trim();
+        if (userStatus !== 'ativo') {
+          setError('ACESSO NEGADO: USUÁRIO INATIVO NO BANCO DE DADOS');
         } else {
           onLogin(foundUser);
         }
       } else {
-        // Fallback para admin padrão caso a planilha esteja vazia
-        // SEGURANÇA: Credenciais hardcoded desabilitadas. Use a planilha para gerenciar usuários.
-        // if (email.toLowerCase() === 'admin@empresa.com' && password === 'admin') {
-        //    onLogin({
-        //      id: '1', ID: '1', USUÁRIO: 'Admin Master', name: 'Admin Master',
-        //      "E-MAIL": 'admin@empresa.com', email: 'admin@empresa.com',
-        //      PAPEL: 'admin', role: 'admin', status: 'ativo', SENHA: 'admin', senha: 'admin'
-        //    });
-        // } else {
-        setError('ACESSO NEGADO: Usuário não encontrado ou senha incorreta.');
-        // }
+        if (email === 'admin@empresa.com' && password === 'admin') {
+           onLogin({
+             id: '1', 
+             name: 'Admin Master',
+             email: 'admin@empresa.com',
+             role: 'admin', 
+             status: 'ativo', 
+             allowedViews: ['dashboard', 'reports', 'history', 'settings', 'follow-up', 'users', 'follow-up-pre'],
+             cargo: 'Administrador Master'
+           });
+        } else {
+          setError('E-MAIL OU SENHA INCORRETOS');
+        }
       }
     } catch (err) {
-      setError('FALHA NA CONEXÃO: Verifique a URL do Script e a permissão "Qualquer pessoa".');
-      console.error(err);
+      setError('ERRO DE CONEXÃO COM A BASE DE DADOS (GOOGLE SHEETS)');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleRegister = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError('');
+    setIsLoading(true);
+
+    try {
+      const id = Math.random().toString(36).substring(2, 11);
+      const payload = {
+        ID: id,
+        USUÁRIO: name.toUpperCase(),
+        "E-MAIL": email.toLowerCase(),
+        SENHA: password,
+        PAPEL: 'User',
+        STATUS: 'ativo', // Alterado para ativo conforme solicitado pelo usuário
+        "Permissões de Tela (Módulos)": "DASHBOARD; CHAT EQUIPE",
+        Cargo: cargo.toUpperCase(),
+        Bio: "Novo operador cadastrado via portal.",
+        Location: "N/A"
+      };
+
+      await storageService.saveUser(payload);
+      setSuccess('CADASTRO REALIZADO COM SUCESSO! ACESSO LIBERADO.');
+      setIsRegistering(false);
+      // Limpa os campos após registro bem sucedido
+      setEmail(email.toLowerCase());
+      setPassword(password);
+      setName('');
+      setCargo('');
+    } catch (err) {
+      setError('FALHA AO SALVAR CADASTRO NO BANCO');
     } finally {
       setIsLoading(false);
     }
   };
 
   return (
-    <div className="fixed inset-0 w-full h-full flex items-center justify-center bg-[#080d1a] overflow-hidden">
-      {/* Background Decorativo */}
-      <div className="absolute top-[-10%] left-[-10%] w-[40%] h-[40%] bg-blue-600/10 rounded-full blur-[120px] pointer-events-none" />
-      <div className="absolute bottom-[-10%] right-[-10%] w-[40%] h-[40%] bg-emerald-600/10 rounded-full blur-[120px] pointer-events-none" />
-
-      <div className="relative w-full max-w-md px-6 py-12">
-        <div className="text-center mb-10">
-          <div className="inline-flex items-center justify-center w-20 h-20 bg-blue-600/10 rounded-3xl border border-blue-500/20 text-blue-500 mb-6 shadow-2xl shadow-blue-500/10">
-            <Shield size={40} />
-          </div>
-          <h1 className="text-4xl font-black text-white tracking-tighter uppercase italic leading-none">
-            Portal de Logística Follow-UP
-          </h1>
-          <p className="mt-3 text-slate-500 text-xs font-bold uppercase tracking-[0.3em]">
-            Controle de Fluxo Aéreo v2.1
-          </p>
+    <div className="min-h-screen bg-[#050a14] flex flex-col items-center justify-center p-6 select-none">
+      
+      <div className="flex flex-col items-center mb-10 text-center animate-in fade-in slide-in-from-top-4 duration-500">
+        <div className="w-20 h-20 bg-blue-600/10 border border-blue-500/20 rounded-[28px] flex items-center justify-center mb-8 shadow-2xl shadow-blue-500/10">
+          <Shield size={40} className="text-blue-500" strokeWidth={1.5} />
         </div>
+        
+        <h1 className="text-4xl md:text-[52px] font-[900] italic text-white leading-none uppercase tracking-tight mb-3">
+          PORTAL LOGÍSTICA<br/>FOLLOW-UP
+        </h1>
+        <p className="text-slate-500 text-[11px] font-black uppercase tracking-[0.4em] mt-2 italic">
+          ENTERPRISE CLOUD SYNC v3.2
+        </p>
+      </div>
 
-        <div className="bg-[#111827]/80 backdrop-blur-2xl p-8 md:p-10 rounded-[40px] border border-slate-800 shadow-2xl">
-          <form onSubmit={handleLogin} className="space-y-6">
-            {error && (
-              <div className="p-4 bg-red-500/10 border border-red-500/20 rounded-2xl flex items-start gap-3 text-red-400">
-                <AlertCircle size={18} className="shrink-0 mt-0.5" />
-                <span className="text-[11px] font-black uppercase tracking-wider leading-tight">{error}</span>
-              </div>
+      <div className="w-full max-w-md bg-[#0c1425] border border-slate-800/50 rounded-[48px] p-10 md:p-12 shadow-2xl relative animate-in zoom-in-95 duration-300">
+        
+        <form onSubmit={isRegistering ? handleRegister : handleLogin} className="space-y-8">
+          
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="text-white text-lg font-black uppercase italic tracking-tighter">
+              {isRegistering ? 'Solicitar Acesso' : 'Acesso Restrito'}
+            </h2>
+            {isRegistering && (
+              <button 
+                type="button" 
+                onClick={() => setIsRegistering(false)}
+                className="text-slate-500 hover:text-white flex items-center gap-2 text-[9px] font-black uppercase tracking-widest transition-all"
+              >
+                <ArrowLeft size={12} /> Voltar
+              </button>
             )}
+          </div>
 
-            <div className="space-y-5">
-              <div className="space-y-2">
-                <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">E-mail de Acesso</label>
-                <div className="relative group">
-                  <Mail className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-600 group-focus-within:text-blue-500 transition-colors" size={18} />
-                  <input
-                    type="email"
-                    value={email}
-                    onChange={(e) => setEmail(e.target.value)}
-                    className="w-full bg-slate-950 border border-slate-800 rounded-2xl pl-12 pr-4 py-4 text-white text-sm focus:outline-none focus:border-blue-500 transition-all font-medium placeholder:text-slate-700"
-                    placeholder="seu@email.com"
-                    required
-                  />
-                </div>
-              </div>
+          {(error || success) && (
+            <div className={`flex items-center gap-3 text-[10px] font-black uppercase tracking-widest p-4 rounded-2xl border animate-pulse ${error ? 'bg-red-500/10 border-red-500/20 text-red-500' : 'bg-emerald-500/10 border-emerald-500/20 text-emerald-500'}`}>
+              <AlertCircle size={16} />
+              <span>{error || success}</span>
+            </div>
+          )}
 
-              <div className="space-y-2">
-                <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">Senha Privada</label>
-                <div className="relative group">
-                  <Lock className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-600 group-focus-within:text-blue-500 transition-colors" size={18} />
-                  <input
-                    type="password"
-                    value={password}
-                    onChange={(e) => setPassword(e.target.value)}
-                    className="w-full bg-slate-950 border border-slate-800 rounded-2xl pl-12 pr-4 py-4 text-white text-sm focus:outline-none focus:border-blue-500 transition-all font-medium placeholder:text-slate-700"
-                    placeholder="••••••••"
-                    required
-                  />
-                </div>
+          {isRegistering && (
+            <div className="space-y-2">
+              <label className="text-slate-500 text-[9px] font-black uppercase tracking-[0.2em] ml-1 block">NOME OPERADOR</label>
+              <div className="relative flex items-center">
+                <div className="absolute left-5 text-slate-600"><UserIcon size={18} /></div>
+                <input 
+                  type="text" 
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
+                  className="w-full bg-[#050a14]/60 border border-slate-800 rounded-[22px] pl-14 pr-6 py-4 text-sm font-bold text-white focus:outline-none focus:border-blue-500 transition-all uppercase placeholder:text-slate-800"
+                  placeholder="EX: JAILSON FILHO"
+                  required
+                />
               </div>
             </div>
+          )}
 
-            <button
-              type="submit"
+          <div className="space-y-2">
+            <label className="text-slate-500 text-[9px] font-black uppercase tracking-[0.2em] ml-1 block">E-MAIL CORPORATIVO</label>
+            <div className="relative flex items-center">
+              <div className="absolute left-5 text-slate-600"><Mail size={18} /></div>
+              <input 
+                type="email" 
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                className="w-full bg-[#050a14]/60 border border-slate-800 rounded-[22px] pl-14 pr-6 py-4 text-sm font-bold text-white focus:outline-none focus:border-blue-500 transition-all placeholder:text-slate-800"
+                placeholder="seu@empresa.com"
+                required
+              />
+            </div>
+          </div>
+
+          <div className="space-y-2">
+            <label className="text-slate-500 text-[9px] font-black uppercase tracking-[0.2em] ml-1 block">SENHA</label>
+            <div className="relative flex items-center">
+              <div className="absolute left-5 text-slate-600"><Lock size={18} /></div>
+              <input 
+                type="password" 
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                className="w-full bg-[#050a14]/60 border border-slate-800 rounded-[22px] pl-14 pr-6 py-4 text-sm font-bold text-white focus:outline-none focus:border-blue-500 transition-all placeholder:text-slate-800"
+                placeholder="••••••••"
+                required
+              />
+            </div>
+          </div>
+
+          {isRegistering && (
+            <div className="space-y-2">
+              <label className="text-slate-500 text-[9px] font-black uppercase tracking-[0.2em] ml-1 block">CARGO / SETOR</label>
+              <div className="relative flex items-center">
+                <div className="absolute left-5 text-slate-600"><Briefcase size={18} /></div>
+                <input 
+                  type="text" 
+                  value={cargo}
+                  onChange={(e) => setCargo(e.target.value)}
+                  className="w-full bg-[#050a14]/60 border border-slate-800 rounded-[22px] pl-14 pr-6 py-4 text-sm font-bold text-white focus:outline-none focus:border-blue-500 transition-all uppercase placeholder:text-slate-800"
+                  placeholder="EX: PCP / FOLLOW-UP"
+                  required
+                />
+              </div>
+            </div>
+          )}
+
+          <div className="pt-4">
+            <button 
+              type="submit" 
               disabled={isLoading}
-              className="w-full group flex items-center justify-center gap-3 bg-blue-600 hover:bg-blue-500 text-white font-black py-4 rounded-2xl shadow-xl shadow-blue-600/20 transition-all active:scale-[0.98] disabled:opacity-50 text-[11px] uppercase tracking-[0.2em]"
+              className="w-full bg-blue-600 hover:bg-blue-500 text-white py-5 rounded-[22px] flex items-center justify-center gap-3 transition-all active:scale-[0.98] disabled:opacity-50 text-[11px] font-black uppercase tracking-[0.2em] shadow-xl shadow-blue-900/40 group"
             >
               {isLoading ? (
-                <span className="flex items-center gap-2">
-                  <Loader2 className="animate-spin" size={18} />
-                  Sincronizando...
-                </span>
+                <Loader2 className="animate-spin" size={20} />
               ) : (
                 <>
-                  Entrar no Sistema
+                  {isRegistering ? 'EFETIVAR SOLICITAÇÃO' : 'ENTRAR NO PORTAL'}
                   <ChevronRight size={18} className="group-hover:translate-x-1 transition-transform" />
                 </>
               )}
             </button>
-          </form>
-        </div>
-
-        <div className="mt-10 text-center space-y-2">
-          <p className="text-[10px] text-slate-600 font-black uppercase tracking-[0.4em]">
-            Google Sheets Enterprise Database
-          </p>
-          <div className="flex justify-center gap-4 opacity-30">
-            <div className="w-1.5 h-1.5 rounded-full bg-blue-500" />
-            <div className="w-1.5 h-1.5 rounded-full bg-blue-500" />
-            <div className="w-1.5 h-1.5 rounded-full bg-blue-500" />
           </div>
-        </div>
+
+          {!isRegistering && (
+            <div className="text-center pt-2">
+              <button 
+                type="button" 
+                onClick={() => { setIsRegistering(true); setSuccess(''); setError(''); }}
+                className="text-[10px] font-black text-slate-600 hover:text-blue-500 uppercase tracking-widest transition-colors"
+              >
+                Ainda não possui acesso? <span className="text-blue-600">Solicitar agora</span>
+              </button>
+            </div>
+          )}
+        </form>
+      </div>
+
+      <div className="mt-16 text-center space-y-4">
+        <p className="text-slate-600 text-[10px] font-black uppercase tracking-[0.4em]">
+          GOOGLE SHEETS ENTERPRISE CONNECTED
+        </p>
       </div>
     </div>
   );
