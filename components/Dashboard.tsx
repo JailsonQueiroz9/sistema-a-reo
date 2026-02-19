@@ -1,320 +1,322 @@
 
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
-import {
-  Plus,
-  RotateCw,
-  Search,
-  LayoutGrid,
-  List,
-  Edit,
-  Trash2,
-  Download,
-  Package,
-  ShieldCheck,
-  FileSpreadsheet,
-  ExternalLink,
-  FileText,
-  FileBox,
-  ChevronDown,
-  Menu
+import React, { useState, useEffect, useMemo } from 'react';
+import { 
+  Plus, RotateCw, Search, Trash2, Package, 
+  FileText, Edit3, Loader2, ExternalLink, ChevronDown,
+  LayoutGrid, List, ChevronRight, Calendar, Box, Truck,
+  Download, ArrowUpDown, ChevronUp, X, FileCheck, AlignLeft,
+  Link as LinkIcon, Globe
 } from 'lucide-react';
-import { AWBRecord, AWBStatus, FilterState, User } from '../types';
-import { storageService, getApiUrl, formatDate } from '../services/storageService';
+import { AWBRecord, AWBStatus, FilterState, User, ViewType } from '../types';
+import { storageService, getApiUrl, formatDate, SHEETS } from '../services/storageService';
 import AWBModal from './AWBModal';
+import StatusBadge from './StatusBadge';
+
+// Helper universal para extrair todos os PDFs de todas as colunas possíveis
+export const getAttachmentLinks = (r: AWBRecord): string[] => {
+  const links: string[] = [];
+  
+  // 1. Verificar coluna principal 'Documentos'
+  const mainDocs = r.Documentos || r.documentos;
+  if (mainDocs) {
+    String(mainDocs).split('|').forEach(l => {
+      const t = l.trim();
+      if (t.startsWith('http')) links.push(t);
+    });
+  }
+
+  // 2. Verificar colunas dinâmicas PDF_1 até PDF_11
+  for (let i = 1; i <= 11; i++) {
+    const key = `PDF_${i}`;
+    const val = r[key];
+    if (val && String(val).trim().startsWith('http')) {
+      links.push(String(val).trim());
+    }
+  }
+
+  return Array.from(new Set(links)); // Remove duplicatas
+};
 
 interface DashboardProps {
   filters: FilterState;
-  onClearFilters: () => void;
-  theme: 'dark' | 'light';
-  onGoToSettings: () => void;
-  onMobileMenuToggle?: () => void;
 }
 
-const Dashboard: React.FC<DashboardProps> = ({ filters, onClearFilters, theme, onGoToSettings, onMobileMenuToggle }) => {
+const Dashboard: React.FC<DashboardProps> = ({ filters }) => {
   const [records, setRecords] = useState<AWBRecord[]>([]);
   const [loading, setLoading] = useState(false);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingRecord, setEditingRecord] = useState<AWBRecord | undefined>();
-  const [viewMode, setViewMode] = useState<'table' | 'grid'>('table');
   const [currentUser, setCurrentUser] = useState<User | null>(null);
-  const [activeDocMenu, setActiveDocMenu] = useState<string | null>(null);
+  const [openDocsId, setOpenDocsId] = useState<string | null>(null);
+  const [viewMode, setViewMode] = useState<'table' | 'grid'>(() => {
+    return (localStorage.getItem('dashboard_view_mode') as 'table' | 'grid') || 'table';
+  });
 
   useEffect(() => {
     const saved = localStorage.getItem('auth_user');
-    if (saved) setCurrentUser(JSON.parse(saved));
+    if (saved) {
+      try { setCurrentUser(JSON.parse(saved)); } catch { setCurrentUser(null); }
+    }
+    loadData();
   }, []);
 
-  const isAdmin = currentUser?.role === 'admin';
-
   const loadData = async () => {
-    if (!getApiUrl()) return;
     setLoading(true);
     try {
-      const data = await storageService.getRecords();
+      const data = await storageService.getRecords(SHEETS.AWB);
       setRecords(data);
-    } catch (error) {
-      console.error("Erro ao carregar registros:", error);
+    } catch (err) {
+      console.error("Erro ao carregar dados:", err);
     } finally {
       setLoading(false);
     }
   };
 
-  useEffect(() => {
-    loadData();
-  }, []);
-
-  // FILTRO CORRIGIDO: Normaliza status para comparação direta com o enum
-  const filteredRecords = useMemo(() => {
-    return records.filter(r => {
-      const matchesSearch =
-        (r.fornecedor || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
-        (r.awbNumber || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
-        (r.nfs || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
-        (r.marca || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
-        (r.material || '').toLowerCase().includes(searchTerm.toLowerCase());
-
-      const matchesStatus = filters.statuses.length === 0 || filters.statuses.includes(r.status);
-      return matchesSearch && matchesStatus;
-    });
-  }, [records, searchTerm, filters.statuses]);
-
-  const handleDelete = async (id: string) => {
-    if (!isAdmin) return;
-    if (confirm('Confirmar exclusão definitiva na Planilha?')) {
-      setLoading(true);
-      await storageService.deleteRecord(id);
-      setTimeout(loadData, 1500);
+  const handleDelete = async (e: React.MouseEvent, id: string) => {
+    e.stopPropagation();
+    if (!confirm('Deseja EXCLUIR este registro permanentemente?')) return;
+    setDeletingId(id);
+    try {
+      await storageService.deleteRecord(id, SHEETS.AWB);
+      await loadData();
+    } finally {
+      setDeletingId(null);
     }
   };
 
-  const handleEdit = (record: AWBRecord) => {
-    if (!isAdmin) return;
+  const handleEdit = (e: React.MouseEvent, record: AWBRecord) => {
+    e.stopPropagation();
     setEditingRecord(record);
     setIsModalOpen(true);
   };
 
-  const exportExcel = useCallback(() => {
-    const headers = "Fornecedor;Saida;NFs;AWB;Status;Chegada;Marca;Material;Observacao;Rastreio;Documentos\n";
-    const rows = filteredRecords.map(r => `${r.fornecedor};${formatDate(r.saida)};${r.nfs};${r.awbNumber};${r.status};${formatDate(r.chegada)};${r.marca};${r.material};${r.observacao};${r.rastreio};${r.documentos}`).join("\n");
-    const blob = new Blob(["\ufeff" + headers + rows], { type: 'text/csv;charset=utf-8' });
-    const url = window.URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `rastreamento_awb_${new Date().getTime()}.csv`;
-    a.click();
-  }, [filteredRecords]);
-
-  useEffect(() => {
-    // Listener para exportação de dados
-    const handleExportEvent = () => {
-      exportExcel();
-    };
+  const hasPermission = useMemo(() => {
+    if (!currentUser) return false;
+    if (currentUser.role === 'admin') return true;
     
-    window.addEventListener('export-data', handleExportEvent);
-    
-    return () => {
-      window.removeEventListener('export-data', handleExportEvent);
-    };
-  }, [exportExcel]);
+    // Regra: Somente quem tem acesso às telas de Follow-up (AWB ou PRÉ) pode criar/editar
+    const views = (currentUser.allowedViews || []) as ViewType[];
+    return views.includes('follow-up') || views.includes('follow-up-pre');
+  }, [currentUser]);
 
-  const handlePrintPdf = () => {
-    window.print();
-  };
-
-  const getStatusColor = (status: AWBStatus) => {
-    switch (status) {
-      case AWBStatus.EM_TRANSITO: return 'bg-yellow-500/10 border-yellow-500/30 text-yellow-500';
-      case AWBStatus.DISPONIVEL: return 'bg-emerald-500/10 border-emerald-500/30 text-emerald-500';
-      case AWBStatus.ENTREGUE: return 'bg-blue-500/10 border-blue-500/30 text-blue-400';
-      case AWBStatus.ATRASADO: return 'bg-red-500/10 border-red-500/30 text-red-400';
-      case AWBStatus.OK: return 'bg-blue-500/10 border-blue-500/30 text-blue-400';
-      default: return 'bg-slate-500/10 border-slate-500/30 text-slate-400';
-    }
-  };
-
-  const isDark = theme === 'dark';
+  const filteredRecords = useMemo(() => {
+    return records.filter(r => {
+      const s = searchTerm.toLowerCase();
+      const searchStr = `${r.Fornecedor} ${r.AWB} ${r["NF's"]} ${r.Marca} ${r.Material} ${r.Rastreio}`.toLowerCase();
+      const matchesSearch = searchStr.includes(s);
+      const currentStatus = (r.Status || r.status) as AWBStatus;
+      const matchesStatus = filters.statuses.length === 0 || filters.statuses.includes(currentStatus);
+      return matchesSearch && matchesStatus;
+    });
+  }, [records, searchTerm, filters.statuses]);
 
   return (
-    <div className={`flex-1 flex flex-col overflow-hidden ${isDark ? 'bg-[#0f172a]' : 'bg-slate-50'}`}>
-      <header className="p-4 md:p-6 pb-2 flex flex-col md:flex-row md:items-center justify-between gap-4">
-        <div className="flex items-center gap-3">
-          <button 
-            onClick={onMobileMenuToggle}
-            className={`lg:hidden p-2 rounded-lg ${isDark ? 'text-slate-400 hover:bg-slate-800' : 'text-slate-600 hover:bg-slate-200'} transition-all`}
-          >
-            <Menu size={20} />
-          </button>
-          <div>
-            <h1 className={`text-xl md:text-2xl font-black uppercase italic tracking-tighter ${isDark ? 'text-white' : 'text-slate-950'}`}>Logística Inteligente</h1>
-            <div className="flex items-center gap-2 text-slate-500 text-[10px] font-black uppercase tracking-[0.3em] mt-1">
-              <ShieldCheck size={12} className="text-emerald-500" />
-              <span>Monitoramento PCP</span>
-            </div>
-          </div>
+    <div className="flex-1 flex flex-col h-screen overflow-hidden bg-[#050a14]">
+      
+      <header className="px-10 py-8 flex items-center justify-between border-b border-slate-900 bg-[#0c1425]/50 backdrop-blur-md">
+        <div className="flex items-center gap-6">
+           <div className="w-14 h-14 bg-blue-600/10 border border-blue-500/20 rounded-2xl flex items-center justify-center text-blue-500 shadow-lg shadow-blue-500/10">
+              <Package size={28} />
+           </div>
+           <div>
+             <h2 className="text-2xl font-black text-white italic tracking-tighter uppercase leading-none">Painel de Monitoramento</h2>
+             <p className="text-slate-500 text-[9px] font-black uppercase tracking-[0.4em] mt-2 italic">Data Matrix Integrated v3.2</p>
+           </div>
         </div>
-        <div className="flex items-center gap-2 no-print flex-wrap">
-          <button onClick={loadData} className={`flex items-center gap-2 px-3 md:px-4 py-2 text-[9px] font-black uppercase tracking-widest ${isDark ? 'text-slate-400 border-slate-800 hover:bg-slate-800' : 'text-slate-600 border-slate-200 hover:bg-slate-100'} border rounded-xl transition-all`}>
-            <RotateCw size={12} className={loading ? 'animate-spin' : ''} /> <span className="hidden sm:inline">Atualizar</span>
-          </button>
-          {isAdmin && (
-            <button onClick={() => { setEditingRecord(undefined); setIsModalOpen(true); }} className="flex items-center gap-2 px-4 md:px-5 py-2 text-[9px] font-black uppercase tracking-widest bg-blue-600 text-white rounded-xl hover:bg-blue-500 transition-all shadow-lg shadow-blue-900/20">
-              <Plus size={14} /> <span className="hidden sm:inline">Novo AWB</span>
-            </button>
-          )}
+
+        <div className="flex items-center gap-4">
+           <div className="flex bg-slate-900 p-1 rounded-xl border border-slate-800">
+              <button onClick={() => setViewMode('table')} className={`p-2 rounded-lg transition-all ${viewMode === 'table' ? 'bg-blue-600 text-white' : 'text-slate-500'}`}><List size={18} /></button>
+              <button onClick={() => setViewMode('grid')} className={`p-2 rounded-lg transition-all ${viewMode === 'grid' ? 'bg-blue-600 text-white' : 'text-slate-500'}`}><LayoutGrid size={18} /></button>
+           </div>
+           <button onClick={loadData} className="p-3 bg-slate-900 border border-slate-800 text-slate-500 hover:text-white rounded-xl transition-all">
+              <RotateCw size={18} className={loading ? 'animate-spin' : ''} />
+           </button>
+           {hasPermission && (
+             <button onClick={() => { setEditingRecord(undefined); setIsModalOpen(true); }} className="px-6 py-3 bg-blue-600 hover:bg-blue-500 text-white rounded-xl text-[10px] font-black uppercase tracking-widest shadow-xl glow-blue flex items-center gap-3 transition-all active:scale-95">
+               <Plus size={18} /> Novo Embarque
+             </button>
+           )}
         </div>
       </header>
 
-      <main className="flex-1 overflow-y-auto px-3 md:px-6 py-4 space-y-6 custom-scrollbar">
-        <div className={`${isDark ? 'bg-[#1e293b]/60 border-slate-800' : 'bg-white border-slate-200'} rounded-[24px] border overflow-hidden shadow-2xl backdrop-blur-md table-container`}>
-          <div className={`p-4 border-b ${isDark ? 'border-slate-800' : 'border-slate-100'} flex flex-col md:flex-row md:items-center justify-between gap-4 no-print`}>
-            <div className="relative group">
-              <Search size={14} className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-500 group-focus-within:text-blue-500 transition-colors" />
-              <input
-                type="text"
-                placeholder="Pesquisar registros..."
-                className={`${isDark ? 'bg-[#0f172a] border-slate-700 text-white' : 'bg-slate-50 border-slate-200 text-slate-900'} border rounded-xl pl-10 pr-4 py-2 text-[10px] font-bold w-full md:w-64 focus:outline-none focus:border-blue-500 transition-all uppercase tracking-wider`}
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-              />
-            </div>
+      <div className="px-10 py-6 border-b border-slate-900 bg-[#0c1425]/30 flex items-center gap-6">
+        <div className="relative flex-1 group">
+           <Search size={18} className="absolute left-5 top-1/2 -translate-y-1/2 text-slate-600 group-focus-within:text-blue-500 transition-colors" />
+           <input type="text" placeholder="PESQUISAR CARGA..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} className="w-full bg-[#0d1425] border border-slate-800 rounded-2xl pl-14 pr-6 py-4 text-[11px] font-black text-white uppercase focus:border-blue-500 outline-none transition-all placeholder:text-slate-800" />
+        </div>
+        <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest bg-slate-900 px-4 py-2 rounded-lg">{filteredRecords.length} Resultados</p>
+      </div>
 
-            <div className="flex items-center gap-2">
-              <div className="flex items-center gap-1 border-r border-slate-700/50 pr-2 mr-1">
-                <button onClick={() => setViewMode('table')} className={`p-2 rounded-lg transition-all ${viewMode === 'table' ? 'bg-blue-600 text-white shadow-lg' : 'text-slate-500 hover:bg-slate-800'}`} title="Tabela"><List size={16} /></button>
-                <button onClick={() => setViewMode('grid')} className={`p-2 rounded-lg transition-all ${viewMode === 'grid' ? 'bg-blue-600 text-white shadow-lg' : 'text-slate-500 hover:bg-slate-800'}`} title="Cards"><LayoutGrid size={16} /></button>
-              </div>
-
-              <div className="flex items-center gap-2">
-                <button onClick={handlePrintPdf} className={`flex items-center gap-2 px-4 py-2 rounded-lg ${isDark ? 'bg-slate-800 hover:bg-slate-700' : 'bg-slate-200 hover:bg-slate-300'} text-[10px] font-black uppercase tracking-widest transition-all shadow-md`}>
-                  <Download size={14} /> PDF
-                </button>
-                <button onClick={exportExcel} className="flex items-center gap-2 px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-[10px] font-black uppercase tracking-widest transition-all shadow-md">
-                  <FileSpreadsheet size={14} /> EXCEL
-                </button>
-              </div>
-            </div>
-          </div>
-
-          <div className="overflow-x-auto min-h-[400px]">
-            {loading ? (
-              <div className="flex flex-col items-center justify-center py-24"><RotateCw size={32} className="animate-spin text-blue-500 mb-4" /><p className="text-slate-500 text-[10px] font-black uppercase tracking-widest">Sincronizando...</p></div>
-            ) : filteredRecords.length === 0 ? (
-              <div className="flex flex-col items-center justify-center py-24 text-slate-500 italic"><Package size={48} className="mb-4 opacity-10" /><p className="text-[10px] font-black uppercase tracking-widest">Sem dados para exibir</p></div>
-            ) : viewMode === 'table' ? (
-              <table className="w-full text-left whitespace-nowrap min-w-[1300px] border-collapse">
-                <thead className={`${isDark ? 'bg-[#0f172a]/80 text-slate-500' : 'bg-slate-50 text-slate-600'} text-[9px] font-black uppercase tracking-[0.2em] border-b ${isDark ? 'border-slate-800' : 'border-slate-100'}`}>
-                  <tr>
-                    <th className="px-5 py-5">Fornecedor</th>
-                    <th className="px-5 py-5">Saída</th>
-                    <th className="px-5 py-5">NF's</th>
-                    <th className="px-5 py-5">AWB</th>
-                    <th className="px-5 py-5">Status</th>
-                    <th className="px-5 py-5">Chegada</th>
-                    <th className="px-5 py-5">Marca</th>
-                    <th className="px-5 py-5">Material</th>
-                    <th className="px-5 py-5">Obs</th>
-                    <th className="px-5 py-5 text-center">Rastreio</th>
-                    <th className="px-5 py-5 text-center">Docs</th>
-                    <th className="px-5 py-5 text-right no-print">Ações</th>
-                  </tr>
-                </thead>
-                <tbody className={`divide-y ${isDark ? 'divide-slate-800' : 'divide-slate-100'}`}>
-                  {filteredRecords.map((record) => (
-                    <tr key={record.id} className={`${isDark ? 'hover:bg-blue-600/5' : 'hover:bg-slate-100/50'} transition-colors group text-[10px] font-bold`}>
-                      <td className={`px-5 py-4 uppercase ${isDark ? 'text-white' : 'text-slate-900'}`}>{record.fornecedor || '-'}</td>
-                      <td className="px-5 py-4 text-slate-400">{formatDate(record.saida)}</td>
-                      <td className="px-5 py-4 text-slate-500">{record.nfs || '-'}</td>
-                      <td className="px-5 py-4 font-mono text-blue-400 font-black">{record.awbNumber || '-'}</td>
-                      <td className="px-5 py-4">
-                        <span className={`px-2 py-0.5 rounded-full text-[8px] font-black uppercase border status-badge ${getStatusColor(record.status)}`}>{record.status}</span>
-                      </td>
-                      <td className="px-5 py-4 text-slate-400">{formatDate(record.chegada)}</td>
-                      <td className="px-5 py-4 uppercase text-slate-400">{record.marca || '-'}</td>
-                      <td className="px-5 py-4 text-slate-500 truncate max-w-[120px]">{record.material || '-'}</td>
-                      <td className="px-5 py-4 text-slate-500 truncate max-w-[120px]" title={record.observacao}>{record.observacao || '-'}</td>
-                      <td className="px-5 py-4 text-center">
-                        {record.rastreio ? (
-                          <a href={record.rastreio} target="_blank" rel="noopener noreferrer" className="inline-flex p-1.5 rounded-lg bg-blue-500/10 text-blue-500 hover:bg-blue-500 hover:text-white transition-all border border-blue-500/20 no-print">
-                            <ExternalLink size={12} />
+      <main className="flex-1 overflow-auto p-10 custom-scrollbar">
+        {viewMode === 'table' ? (
+          <div className="overflow-x-auto">
+            <table className="w-full text-left border-separate border-spacing-y-4 min-w-[1600px]">
+              <thead>
+                <tr className="text-[9px] uppercase tracking-[0.2em] text-slate-500 font-black">
+                  <th className="px-4 py-2">Fornecedor</th>
+                  <th className="px-4 py-2">Saída</th>
+                  <th className="px-4 py-2">NF's</th>
+                  <th className="px-4 py-2">AWB</th>
+                  <th className="px-4 py-2">Status</th>
+                  <th className="px-4 py-2">Rastreio</th>
+                  <th className="px-4 py-2">Material</th>
+                  <th className="px-4 py-2">Observação</th>
+                  <th className="px-4 py-2">Docs</th>
+                  <th className="px-4 py-2 text-right">Ações</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filteredRecords.map((r) => {
+                  const pdfs = getAttachmentLinks(r);
+                  const trackVal = r.Rastreio || r.rastreio;
+                  return (
+                    <tr key={r.id || r.ID} className="bg-[#0c1425]/40 hover:bg-[#0c1425]/60 transition-all border border-slate-900 shadow-xl">
+                      <td className="px-4 py-6 rounded-l-[24px] text-xs font-black text-white uppercase">{r.Fornecedor || r.fornecedor}</td>
+                      <td className="px-4 py-6 text-xs font-bold text-slate-300">{formatDate(r.Saída || r.saida)}</td>
+                      <td className="px-4 py-6 text-[11px] font-bold text-slate-400">{r["NF's"] || r.nfs || '-'}</td>
+                      <td className="px-4 py-6 text-xs font-black text-blue-500 font-mono tracking-tighter">{r.AWB || r.awbNumber}</td>
+                      <td className="px-4 py-6"><StatusBadge status={r.Status || r.status || AWBStatus.EM_TRANSITO} /></td>
+                      <td className="px-4 py-6">
+                        {trackVal ? (
+                          <a 
+                            href={String(trackVal).startsWith('http') ? String(trackVal) : `https://www.google.com/search?q=${trackVal}`} 
+                            target="_blank" 
+                            rel="noreferrer" 
+                            className="flex items-center gap-2 text-emerald-400 hover:text-white transition-all group"
+                          >
+                             <div className="p-2 bg-emerald-500/10 rounded-lg group-hover:bg-emerald-500 group-hover:text-white transition-all">
+                                <Globe size={12} />
+                             </div>
+                             <span className="text-[9px] font-black uppercase tracking-widest hidden xl:inline">Rastrear</span>
                           </a>
-                        ) : '-'}
+                        ) : (
+                          <span className="text-slate-800">-</span>
+                        )}
                       </td>
-                      <td className="px-5 py-4 text-center relative overflow-visible">
-                        {record.documentos ? (
-                          <div className="relative inline-block no-print">
-                            <button
-                              onClick={() => setActiveDocMenu(activeDocMenu === record.id ? null : record.id)}
-                              className="p-1.5 rounded-lg bg-emerald-500/10 text-emerald-500 hover:bg-emerald-500 hover:text-white transition-all border border-emerald-500/20 shadow-sm flex items-center gap-1"
-                            >
-                              <FileText size={12} />
-                              <ChevronDown size={8} />
-                            </button>
-                            {activeDocMenu === record.id && (
-                              <div className={`absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-40 rounded-xl shadow-2xl border z-[100] p-1.5 overflow-hidden ${isDark ? 'bg-[#0f172a] border-slate-700' : 'bg-white border-slate-200'}`}>
-                                <div className="max-h-32 overflow-y-auto custom-scrollbar space-y-0.5">
-                                  {record.documentos.split('|').map((url, i) => (
-                                    <a key={i} href={url} target="_blank" rel="noopener noreferrer" className={`flex items-center gap-2 p-1.5 rounded-md text-[9px] font-bold ${isDark ? 'hover:bg-slate-800 text-emerald-400' : 'hover:bg-slate-50 text-emerald-600'} transition-all`}>
-                                      <FileBox size={12} /> Doc {i + 1}
-                                    </a>
-                                  ))}
-                                </div>
-                              </div>
-                            )}
+                      <td className="px-4 py-6 text-[10px] font-black text-slate-500 uppercase">{r.Material || r.material || '-'}</td>
+                      <td className="px-4 py-6 text-[10px] font-bold text-slate-600 uppercase max-w-[200px] truncate" title={r.Observação || r.observacao}>{r.Observação || r.observacao || '-'}</td>
+                      <td className="px-4 py-6 relative">
+                        <button 
+                          onClick={(e) => { e.stopPropagation(); pdfs.length > 0 && setOpenDocsId(openDocsId === (r.id || r.ID) ? null : (r.id || r.ID)); }}
+                          className={`w-10 h-10 flex items-center justify-center rounded-xl transition-all border ${pdfs.length > 0 ? 'bg-slate-900 border-slate-800 text-emerald-500 hover:bg-emerald-600 hover:text-white' : 'bg-slate-950/50 border-slate-900 text-slate-800 cursor-not-allowed opacity-30'}`}
+                        >
+                           <FileText size={18} />
+                           {pdfs.length > 0 && <span className="absolute -top-1 -right-1 w-4 h-4 bg-emerald-500 text-white text-[8px] font-black flex items-center justify-center rounded-full border border-[#050a14]">{pdfs.length}</span>}
+                        </button>
+                        {openDocsId === (r.id || r.ID) && <DocumentDropdown links={pdfs} onClose={() => setOpenDocsId(null)} />}
+                      </td>
+                      <td className="px-4 py-6 rounded-r-[24px] text-right">
+                        {hasPermission && (
+                          <div className="flex items-center justify-end gap-2">
+                             <button onClick={(e) => handleEdit(e, r)} className="p-3 text-slate-600 hover:text-blue-500 hover:bg-blue-500/10 rounded-xl transition-all"><Edit3 size={18} /></button>
+                             <button onClick={(e) => handleDelete(e, r.id || r.ID)} className="p-3 text-slate-800 hover:text-rose-500 hover:bg-rose-500/10 rounded-xl transition-all"><Trash2 size={18} /></button>
                           </div>
-                        ) : '-'}
-                      </td>
-                      <td className="px-5 py-4 text-right no-print">
-                        <div className="flex items-center justify-end gap-1 opacity-20 group-hover:opacity-100 transition-all">
-                          {isAdmin && (
-                            <>
-                              <button onClick={() => handleEdit(record)} className="p-1.5 hover:bg-blue-500/10 rounded-md text-slate-400 hover:text-blue-400"><Edit size={14} /></button>
-                              <button onClick={() => handleDelete(record.ID || record.id)} className="p-1.5 hover:bg-red-500/10 rounded-md text-slate-400 hover:text-red-400"><Trash2 size={14} /></button>
-                            </>
-                          )}
-                        </div>
+                        )}
                       </td>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
-            ) : (
-              <div className="p-6 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
-                {filteredRecords.map((record) => (
-                  <div key={record.id} className={`${isDark ? 'bg-[#0f172a] border-slate-700' : 'bg-white border-slate-200'} border rounded-[20px] p-5 shadow-lg group hover:border-blue-500/50 transition-all flex flex-col`}>
-                    <div className="flex justify-between items-start mb-4">
-                      <div className="w-10 h-10 rounded-xl bg-blue-500/10 flex items-center justify-center text-blue-500 border border-blue-500/10"><Package size={20} /></div>
-                      <span className={`px-2 py-0.5 rounded-full text-[8px] font-black uppercase border status-badge ${getStatusColor(record.status)}`}>{record.status}</span>
-                    </div>
-                    <h3 className={`text-xs font-black ${isDark ? 'text-white' : 'text-slate-900'} uppercase mb-1 truncate`}>{record.fornecedor}</h3>
-                    <p className="text-[10px] text-blue-400 font-mono font-black mb-4">{record.awbNumber}</p>
-                    <div className="space-y-2 mb-4">
-                      <div className="flex justify-between text-[9px] font-bold uppercase tracking-widest text-slate-500"><span>Saída</span><span className="text-slate-400">{formatDate(record.saida)}</span></div>
-                      <div className="flex justify-between text-[9px] font-bold uppercase tracking-widest text-slate-500"><span>Marca</span><span className="text-slate-400">{record.marca}</span></div>
-                    </div>
-                    <div className="flex gap-2 mt-auto pt-4 border-t border-slate-800/20 no-print">
-                      {record.rastreio && (
-                        <a href={record.rastreio} target="_blank" className="flex-1 flex items-center justify-center gap-1.5 py-2 rounded-lg bg-blue-600/10 text-blue-500 text-[9px] font-black uppercase transition-all">
-                          <ExternalLink size={12} /> Link
-                        </a>
-                      )}
-                      {isAdmin && (
-                        <div className="flex gap-1">
-                          <button onClick={() => handleEdit(record)} className="p-2 rounded-lg bg-slate-800/50 text-slate-400 hover:text-white transition-colors"><Edit size={14} /></button>
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
+                  );
+                })}
+              </tbody>
+            </table>
           </div>
-        </div>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-8">
+            {filteredRecords.map((r) => {
+              const pdfs = getAttachmentLinks(r);
+              const trackVal = r.Rastreio || r.rastreio;
+              return (
+                <div key={r.id || r.ID} className="bg-[#0c1425]/40 border border-slate-900 rounded-[32px] p-8 hover:bg-[#0c1425] transition-all flex flex-col gap-6 group relative shadow-2xl animate-in zoom-in-95">
+                   <div className="flex justify-between items-start">
+                      <StatusBadge status={r.Status || r.status || AWBStatus.EM_TRANSITO} />
+                      <div className="flex items-center gap-1">
+                        {trackVal && (
+                          <a href={String(trackVal).startsWith('http') ? String(trackVal) : `https://www.google.com/search?q=${trackVal}`} target="_blank" rel="noreferrer" className="p-2.5 bg-blue-600/10 border border-blue-500/20 text-blue-500 rounded-xl hover:bg-blue-600 hover:text-white transition-all" title="Rastrear Carga">
+                            <Globe size={16} />
+                          </a>
+                        )}
+                        {pdfs.length > 0 && (
+                          <div className="relative">
+                            <button onClick={() => setOpenDocsId(openDocsId === (r.id || r.ID) ? null : (r.id || r.ID))} className="p-2.5 bg-emerald-600/10 border border-emerald-500/20 text-emerald-500 rounded-xl hover:bg-emerald-600 hover:text-white transition-all">
+                               <FileCheck size={16} />
+                            </button>
+                            {openDocsId === (r.id || r.ID) && <DocumentDropdown links={pdfs} onClose={() => setOpenDocsId(null)} isRight />}
+                          </div>
+                        )}
+                        {hasPermission && (
+                          <>
+                            <button onClick={(e) => handleEdit(e, r)} className="p-2.5 text-slate-600 hover:text-blue-500 transition-colors"><Edit3 size={16} /></button>
+                            <button onClick={(e) => handleDelete(e, r.id || r.ID)} className="p-2.5 text-slate-800 hover:text-rose-500 transition-colors"><Trash2 size={16} /></button>
+                          </>
+                        )}
+                      </div>
+                   </div>
+                   
+                   <div>
+                      <h4 className="text-xl font-black text-white font-mono italic tracking-tighter uppercase truncate">{r.AWB || r.awbNumber}</h4>
+                      <div className="flex flex-col gap-2 mt-4">
+                         <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest flex items-center gap-2">
+                           <Truck size={12} className="text-blue-500" /> {r.Fornecedor || r.fornecedor}
+                         </p>
+                         <p className="text-[10px] font-black text-slate-600 uppercase tracking-widest ml-5">
+                           NF: {r["NF's"] || r.nfs || 'N/A'}
+                         </p>
+                         <p className="text-[10px] font-black text-slate-600 uppercase tracking-widest flex items-center gap-2">
+                           <Box size={12} className="text-blue-500" /> {r.Material || r.material || '-'}
+                         </p>
+                      </div>
+                   </div>
+
+                   <div className="pt-4 border-t border-white/5 space-y-2">
+                      <p className="text-[9px] font-black text-slate-600 uppercase tracking-[0.3em] flex items-center gap-2">
+                        <AlignLeft size={12} /> Observação
+                      </p>
+                      <p className="text-[10px] font-bold text-slate-400 uppercase leading-relaxed line-clamp-2 italic" title={r.Observação || r.observacao}>
+                        {r.Observação || r.observacao || 'SEM OBSERVAÇÃO'}
+                      </p>
+                   </div>
+
+                   <div className="mt-auto pt-6 border-t border-slate-900 flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <Calendar size={12} className="text-white" />
+                        <span className="text-[9px] font-black text-slate-600 uppercase tracking-widest">{formatDate(r.Saída || r.saida)}</span>
+                      </div>
+                      <span className="px-3 py-1 bg-slate-900 border border-slate-800 rounded-lg text-[8px] font-black text-slate-500 uppercase tracking-widest">{r.Marca || r.marca || '-'}</span>
+                   </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
       </main>
 
-      <AWBModal isOpen={isModalOpen} onClose={() => setIsModalOpen(false)} onSave={() => { setIsModalOpen(false); setTimeout(loadData, 1000); }} editingRecord={editingRecord} theme={theme} />
+      <AWBModal isOpen={isModalOpen} onClose={() => { setIsModalOpen(false); setEditingRecord(undefined); }} onSave={loadData} editingRecord={editingRecord} />
+      {openDocsId && <div className="fixed inset-0 z-[60]" onClick={() => setOpenDocsId(null)} />}
     </div>
   );
 };
+
+const DocumentDropdown = ({ links, onClose, isRight = false }: { links: string[], onClose: () => void, isRight?: boolean }) => (
+  <div className={`absolute ${isRight ? 'right-0' : 'left-0'} top-full mt-2 w-72 bg-[#0c1425] border border-slate-800 rounded-2xl shadow-2xl z-[100] animate-in fade-in slide-in-from-top-2 pointer-events-auto`}>
+    <div className="p-4 bg-emerald-600/5 border-b border-slate-800 flex items-center justify-between rounded-t-2xl">
+      <span className="text-[9px] font-black text-emerald-500 uppercase tracking-widest">Documentação Digital</span>
+      <button onClick={onClose} className="text-slate-600 hover:text-white"><X size={12}/></button>
+    </div>
+    <div className="p-2 max-h-72 overflow-y-auto custom-scrollbar bg-[#0c1425] rounded-b-2xl">
+      {links.map((url, i) => (
+        <a key={i} href={url} target="_blank" rel="noreferrer" className="flex items-center gap-3 p-3 hover:bg-white/5 rounded-xl transition-all group">
+          <div className="p-2 bg-slate-900 rounded-lg text-slate-600 group-hover:text-emerald-500 transition-colors"><Download size={14} /></div>
+          <div className="flex-1 min-w-0">
+            <p className="text-[10px] font-black text-white uppercase truncate">Anexo PDF {i + 1}</p>
+            <p className="text-[8px] text-slate-600 font-bold truncate">Visualizar Cloud Storage</p>
+          </div>
+          <ChevronRight size={14} className="text-slate-800 group-hover:text-emerald-500" />
+        </a>
+      ))}
+    </div>
+  </div>
+);
 
 export default Dashboard;
